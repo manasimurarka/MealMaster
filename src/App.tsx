@@ -172,6 +172,22 @@ function formatMinutes(minutes: number) {
   return remainingMinutes === 0 ? `${hours} hr` : `${hours} hr ${remainingMinutes} min`;
 }
 
+function prioritizeIngredientNames(allIngredientNames: string[], prioritizedIngredientNames: string[]) {
+  const prioritySet = new Set(prioritizedIngredientNames.map((name) => normalizeText(name)));
+  const prioritized: string[] = [];
+  const remaining: string[] = [];
+
+  for (const ingredientName of allIngredientNames) {
+    if (prioritySet.has(normalizeText(ingredientName))) {
+      prioritized.push(ingredientName);
+    } else {
+      remaining.push(ingredientName);
+    }
+  }
+
+  return [...prioritized, ...remaining];
+}
+
 function recipeToDraft(recipe: Recipe): RecipeDraft {
   return {
     id: recipe.id,
@@ -289,6 +305,7 @@ function RecipeCard({
 function DayCard({ day, recipes, assignments, onAddMeal, onChangePortions, onRemove }: DayCardProps) {
   const [selectedRecipeId, setSelectedRecipeId] = useState(recipes[0]?.id ?? "");
   const [plannedPortions, setPlannedPortions] = useState(2);
+  const [isAddMealOpen, setIsAddMealOpen] = useState(false);
   const isFilled = assignments.length > 0;
 
   useEffect(() => {
@@ -306,11 +323,22 @@ function DayCard({ day, recipes, assignments, onAddMeal, onChangePortions, onRem
             {day.dayName} <span>{day.dayNumber}</span>
           </h3>
         </div>
-        {isFilled ? (
-          <span className="status-pill">
-            {assignments.length} meal{assignments.length === 1 ? "" : "s"} planned
-          </span>
-        ) : null}
+        <div className="day-card-header-actions">
+          {isFilled ? (
+            <span className="status-pill">
+              {assignments.length} meal{assignments.length === 1 ? "" : "s"} planned
+            </span>
+          ) : null}
+          <button
+            className={cx("icon-button", "day-add-toggle", isAddMealOpen && "day-add-toggle-open")}
+            type="button"
+            aria-expanded={isAddMealOpen}
+            aria-label={isAddMealOpen ? `Hide add meal for ${day.dayName}` : `Show add meal for ${day.dayName}`}
+            onClick={() => setIsAddMealOpen((current) => !current)}
+          >
+            <PlusIcon />
+          </button>
+        </div>
       </div>
 
       {assignments.length === 0 ? (
@@ -351,42 +379,47 @@ function DayCard({ day, recipes, assignments, onAddMeal, onChangePortions, onRem
         </div>
       )}
 
-      <div className="day-add-panel">
-        <h4>Add meal</h4>
-        {recipes.length === 0 ? (
-          <p className="grocery-empty">Save recipes first to add meals to this day.</p>
-        ) : (
-          <>
-            <select value={selectedRecipeId} onChange={(event) => setSelectedRecipeId(event.target.value)}>
-              {recipes.map((recipe) => (
-                <option key={recipe.id} value={recipe.id}>
-                  {recipe.name}
-                </option>
-              ))}
-            </select>
-            <div className="day-add-actions">
-              <input
-                type="number"
-                min={1}
-                value={plannedPortions}
-                onChange={(event) => setPlannedPortions(Math.max(1, Number(event.target.value) || 1))}
-              />
-              <button
-                className="primary-button"
-                type="button"
-                onClick={() => {
-                  if (!selectedRecipeId) {
-                    return;
-                  }
-                  onAddMeal(selectedRecipeId, Math.max(1, plannedPortions));
-                }}
-              >
-                Add Meal
-              </button>
-            </div>
-          </>
-        )}
-      </div>
+      {isAddMealOpen ? (
+        <div className="day-add-panel">
+          <h4>Add meal</h4>
+          {recipes.length === 0 ? (
+            <p className="grocery-empty">Save recipes first to add meals to this day.</p>
+          ) : (
+            <>
+              <select value={selectedRecipeId} onChange={(event) => setSelectedRecipeId(event.target.value)}>
+                {recipes.map((recipe) => (
+                  <option key={recipe.id} value={recipe.id}>
+                    {recipe.name}
+                  </option>
+                ))}
+              </select>
+              <div className="day-add-actions">
+                <input
+                  type="number"
+                  min={1}
+                  value={plannedPortions}
+                  onChange={(event) => setPlannedPortions(Math.max(1, Number(event.target.value) || 1))}
+                />
+                <button
+                  className="primary-button"
+                  type="button"
+                  onClick={() => {
+                    if (!selectedRecipeId) {
+                      return;
+                    }
+
+                    onAddMeal(selectedRecipeId, Math.max(1, plannedPortions));
+                    setPlannedPortions(1);
+                    setIsAddMealOpen(false);
+                  }}
+                >
+                  Add Meal
+                </button>
+              </div>
+            </>
+          )}
+        </div>
+      ) : null}
     </article>
   );
 }
@@ -405,6 +438,26 @@ function RecommendationPanel({
   onApply,
   onApplySuggestion
 }: RecommendationPanelProps) {
+  const [ingredientSearchTerm, setIngredientSearchTerm] = useState("");
+  const [isUseSoonExpanded, setIsUseSoonExpanded] = useState(false);
+  const normalizedIngredientSearchTerm = normalizeText(ingredientSearchTerm);
+  const isSearchingIngredients = normalizedIngredientSearchTerm.length > 0;
+  const collapsedIngredientLimit = 8;
+  const filteredIngredients = useMemo(() => {
+    if (!isSearchingIngredients) {
+      return allIngredients;
+    }
+
+    return allIngredients.filter((ingredientName) =>
+      normalizeText(ingredientName).includes(normalizedIngredientSearchTerm)
+    );
+  }, [allIngredients, isSearchingIngredients, normalizedIngredientSearchTerm]);
+  const visibleIngredients =
+    isSearchingIngredients || isUseSoonExpanded
+      ? filteredIngredients
+      : filteredIngredients.slice(0, collapsedIngredientLimit);
+  const hiddenIngredientCount = Math.max(allIngredients.length - collapsedIngredientLimit, 0);
+
   return (
     <section className="recommendation-card">
       <div className="section-copy">
@@ -485,21 +538,44 @@ function RecommendationPanel({
 
           <div className="filter-block">
             <span className="filter-title">Use soon this week</span>
-            <div className="chip-row">
-              {allIngredients.map((ingredientName) => (
-                <button
-                  key={ingredientName}
-                  className={cx(
-                    "filter-chip",
-                    constraints.useSoonIngredients.includes(ingredientName) && "filter-chip-active"
-                  )}
-                  type="button"
-                  onClick={() => onUseSoonToggle(ingredientName)}
-                >
-                  {ingredientName}
-                </button>
-              ))}
-            </div>
+            <label className="ingredient-search-field">
+              <SearchIcon />
+              <input
+                type="search"
+                value={ingredientSearchTerm}
+                onChange={(event) => setIngredientSearchTerm(event.target.value)}
+                placeholder="Search ingredients"
+                aria-label="Search use soon ingredients"
+              />
+            </label>
+            {visibleIngredients.length > 0 ? (
+              <div className="chip-row">
+                {visibleIngredients.map((ingredientName) => (
+                  <button
+                    key={ingredientName}
+                    className={cx(
+                      "filter-chip",
+                      constraints.useSoonIngredients.includes(ingredientName) && "filter-chip-active"
+                    )}
+                    type="button"
+                    onClick={() => onUseSoonToggle(ingredientName)}
+                  >
+                    {ingredientName}
+                  </button>
+                ))}
+              </div>
+            ) : (
+              <p className="grocery-empty">No ingredients match that search yet.</p>
+            )}
+            {!isSearchingIngredients && hiddenIngredientCount > 0 ? (
+              <button
+                className="toolbar-link"
+                type="button"
+                onClick={() => setIsUseSoonExpanded((current) => !current)}
+              >
+                {isUseSoonExpanded ? "Show fewer" : `Show ${hiddenIngredientCount} more`}
+              </button>
+            ) : null}
           </div>
 
           <div className="card-footer recommendation-cta">
@@ -861,32 +937,28 @@ function GroceryColumn({ title, items, checkedGroceries, onToggle }: GroceryColu
         <span>{items.length}</span>
       </div>
 
-      {items.length === 0 ? (
-        <p className="grocery-empty">Nothing in this category yet.</p>
-      ) : (
-        <div className="grocery-stack">
-          {items.map((item) => {
-            const isChecked = checkedGroceries.includes(item.normalizedName);
+      <div className="grocery-stack">
+        {items.map((item) => {
+          const isChecked = checkedGroceries.includes(item.normalizedName);
 
-            return (
-              <label key={item.normalizedName} className={cx("grocery-item", isChecked && "grocery-item-checked")}>
-                <input type="checkbox" checked={isChecked} onChange={() => onToggle(item.normalizedName)} />
-        <div>
-          <strong>{item.displayName}</strong>
-          <p>
-            Needed for {item.recipeBreakdown.length} recipe{item.recipeBreakdown.length === 1 ? "" : "s"}
-          </p>
-          <span>
-            {item.recipeBreakdown
-              .map((entry) => `${entry.recipeName} (${entry.amountText || "amount not specified"})`)
-              .join(", ")}
-          </span>
-        </div>
-      </label>
-            );
-          })}
-        </div>
-      )}
+          return (
+            <label key={item.normalizedName} className={cx("grocery-item", isChecked && "grocery-item-checked")}>
+              <input type="checkbox" checked={isChecked} onChange={() => onToggle(item.normalizedName)} />
+              <div>
+                <strong>{item.displayName}</strong>
+                <p>
+                  Needed for {item.recipeBreakdown.length} recipe{item.recipeBreakdown.length === 1 ? "" : "s"}
+                </p>
+                <span>
+                  {item.recipeBreakdown
+                    .map((entry) => `${entry.recipeName} (${entry.amountText || "amount not specified"})`)
+                    .join(", ")}
+                </span>
+              </div>
+            </label>
+          );
+        })}
+      </div>
     </section>
   );
 }
@@ -942,6 +1014,16 @@ function App() {
   const recipesById = useMemo(() => new Map(recipes.map((recipe) => [recipe.id, recipe])), [recipes]);
   const allTags = useMemo(() => getUniqueTags(recipes), [recipes]);
   const allIngredients = useMemo(() => getUniqueIngredientNames(recipes), [recipes]);
+  const previousWeekStart = useMemo(() => shiftWeekStart(selectedWeekStart, -1), [selectedWeekStart]);
+  const orderedUseSoonIngredients = useMemo(() => {
+    const previousWeekPlan = getWeekPlan(weekPlanStore, previousWeekStart);
+    const previousWeekGroceryData = buildGroceryList(recipes, previousWeekPlan);
+    const previousWeekIngredientNames = Object.values(previousWeekGroceryData.grouped).flatMap((items) =>
+      items.map((item) => item.displayName)
+    );
+
+    return prioritizeIngredientNames(allIngredients, previousWeekIngredientNames);
+  }, [allIngredients, previousWeekStart, recipes, weekPlanStore]);
   const selectedWeekRecipeIds = useMemo(
     () =>
       new Set([
@@ -1542,7 +1624,7 @@ function App() {
               <RecommendationPanel
                 constraints={constraints}
                 allTags={allTags}
-                allIngredients={allIngredients}
+                allIngredients={orderedUseSoonIngredients}
                 hasRecipes={recipes.length > 0}
                 result={recommendationResult}
                 recipesById={recipesById}
@@ -1649,7 +1731,9 @@ function App() {
             ) : (
               <>
                 <div className="grocery-grid">
-                  {Object.entries(groceryData.grouped).map(([category, items]) => (
+                  {Object.entries(groceryData.grouped)
+                    .filter(([, items]) => items.length > 0)
+                    .map(([category, items]) => (
                     <GroceryColumn
                       key={category}
                       title={category}
